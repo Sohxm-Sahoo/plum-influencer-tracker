@@ -6,23 +6,34 @@ from apify_client import ApifyClient
 from config import INSTAGRAM_BATCH_SIZE, get_apify_token
 
 URL_COL = "Post Link  (Main Asset)"
+PLATFORM_COL = "Platform"
+
 VIEWS_COL = "Video Views"
 LIKES_COL = "Likes"
 COMMENTS_COL = "Comments"
 ENGAGEMENT_COL = "Engagement"
 
-METRIC_COLS = [VIEWS_COL, LIKES_COL, COMMENTS_COL, ENGAGEMENT_COL]
+METRIC_COLS = [
+    VIEWS_COL,
+    LIKES_COL,
+    COMMENTS_COL,
+    ENGAGEMENT_COL,
+]
 
 
 def normalize_url(url):
-    return str(url).split("?")[0].rstrip("/")
+    if not url:
+        return ""
+    return str(url).split("?")[0].rstrip("/").strip().lower()
 
 
 def is_instagram_row(row):
     url = str(row.get(URL_COL, "")).strip().lower()
-    platform = str(row.get("Platform", "")).strip().upper()
+    platform = str(row.get(PLATFORM_COL, "")).strip().upper()
+
     if "instagram.com" in url:
         return True
+
     return platform in ("IG", "INSTAGRAM", "INSTA")
 
 
@@ -36,28 +47,43 @@ def prepare_instagram_columns(df):
 
 def update_instagram_rows(df, progress_callback=None):
     df = prepare_instagram_columns(df)
-    client = ApifyClient(get_apify_token())
+
+    token = get_apify_token()
+    if not token:
+        raise ValueError("APIFY_TOKEN not configured")
+
+    client = ApifyClient(token)
 
     instagram_rows = []
+
     for idx, row in df.iterrows():
         url = str(row.get(URL_COL, "")).strip()
+
         if not url or url.lower() in ("nan", "none"):
             continue
+
         if not is_instagram_row(row):
             continue
+
         instagram_rows.append((idx, normalize_url(url)))
 
-    total_batches = max(
-        1,
-        (len(instagram_rows) + INSTAGRAM_BATCH_SIZE - 1) // INSTAGRAM_BATCH_SIZE,
-    )
+    if not instagram_rows:
+        return df, 0
+
+    total_batches = (
+        len(instagram_rows) + INSTAGRAM_BATCH_SIZE - 1
+    ) // INSTAGRAM_BATCH_SIZE
+
     updated = 0
 
     for batch_num, start in enumerate(
         range(0, len(instagram_rows), INSTAGRAM_BATCH_SIZE),
         start=1,
     ):
-        batch = instagram_rows[start : start + INSTAGRAM_BATCH_SIZE]
+        batch = instagram_rows[
+            start : start + INSTAGRAM_BATCH_SIZE
+        ]
+
         urls = [url for _, url in batch]
 
         if progress_callback:
@@ -68,19 +94,29 @@ def update_instagram_rows(df, progress_callback=None):
             )
 
         try:
-            run = client.actor("apify/instagram-scraper").call(
+            run = client.actor(
+                "apify/instagram-scraper"
+            ).call(
                 run_input={
                     "directUrls": urls,
                     "resultsLimit": len(urls),
                 }
             )
+
             items = list(
-                client.dataset(run.default_dataset_id).iterate_items()
+                client.dataset(
+                    run["defaultDatasetId"]
+                ).iterate_items()
             )
-        except Exception:
+
+        except Exception as exc:
+            print(
+                f"Instagram batch {batch_num} failed: {exc}"
+            )
             continue
 
         results = {}
+
         for item in items:
             try:
                 source_url = normalize_url(
@@ -89,33 +125,41 @@ def update_instagram_rows(df, progress_callback=None):
                     or item.get("postUrl")
                     or ""
                 )
+
                 likes = int(item.get("likesCount") or 0)
                 comments = int(item.get("commentsCount") or 0)
+
                 views = int(
                     item.get("videoViewCount")
                     or item.get("videoPlayCount")
+                    or item.get("video_view_count")
                     or 0
                 )
+
                 results[source_url] = {
                     "views": views,
                     "likes": likes,
                     "comments": comments,
                     "engagement": likes + comments,
                 }
+
             except Exception:
                 continue
 
         for idx, url in batch:
-            if url not in results:
+            r = results.get(normalize_url(url))
+
+            if not r:
                 continue
-            r = results[url]
-            df.at[idx, VIEWS_COL] = str(r["views"])
-            df.at[idx, LIKES_COL] = str(r["likes"])
-            df.at[idx, COMMENTS_COL] = str(r["comments"])
-            df.at[idx, ENGAGEMENT_COL] = str(r["engagement"])
+
+            df.at[idx, VIEWS_COL] = r["views"]
+            df.at[idx, LIKES_COL] = r["likes"]
+            df.at[idx, COMMENTS_COL] = r["comments"]
+            df.at[idx, ENGAGEMENT_COL] = r["engagement"]
+
             updated += 1
 
-        if start + INSTAGRAM_BATCH_SIZE < len(instagram_rows):
+        if batch_num < total_batches:
             time.sleep(2)
 
     return df, updated
