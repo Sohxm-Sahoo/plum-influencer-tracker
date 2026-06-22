@@ -6,30 +6,21 @@ from apify_client import ApifyClient
 from config import INSTAGRAM_BATCH_SIZE, get_apify_token
 
 URL_COL = "Post Link  (Main Asset)"
-PLATFORM_COL = "Platform"
-
 VIEWS_COL = "Video Views"
 LIKES_COL = "Likes"
 COMMENTS_COL = "Comments"
 ENGAGEMENT_COL = "Engagement"
 
-METRIC_COLS = [
-    VIEWS_COL,
-    LIKES_COL,
-    COMMENTS_COL,
-    ENGAGEMENT_COL,
-]
+METRIC_COLS = [VIEWS_COL, LIKES_COL, COMMENTS_COL, ENGAGEMENT_COL]
 
 
 def normalize_url(url):
-    if not url:
-        return ""
-    return str(url).split("?")[0].rstrip("/").strip().lower()
+    return str(url).split("?")[0].rstrip("/").lower()
 
 
 def is_instagram_row(row):
     url = str(row.get(URL_COL, "")).strip().lower()
-    platform = str(row.get(PLATFORM_COL, "")).strip().upper()
+    platform = str(row.get("Platform", "")).strip().upper()
 
     if "instagram.com" in url:
         return True
@@ -41,7 +32,9 @@ def prepare_instagram_columns(df):
     for col in METRIC_COLS:
         if col not in df.columns:
             df[col] = ""
+
         df[col] = df[col].astype(object)
+
     return df
 
 
@@ -50,7 +43,7 @@ def update_instagram_rows(df, progress_callback=None):
 
     token = get_apify_token()
     if not token:
-        raise ValueError("APIFY_TOKEN not configured")
+        raise Exception("APIFY_TOKEN not configured")
 
     client = ApifyClient(token)
 
@@ -70,9 +63,11 @@ def update_instagram_rows(df, progress_callback=None):
     if not instagram_rows:
         return df, 0
 
-    total_batches = (
-        len(instagram_rows) + INSTAGRAM_BATCH_SIZE - 1
-    ) // INSTAGRAM_BATCH_SIZE
+    total_batches = max(
+        1,
+        (len(instagram_rows) + INSTAGRAM_BATCH_SIZE - 1)
+        // INSTAGRAM_BATCH_SIZE,
+    )
 
     updated = 0
 
@@ -110,9 +105,7 @@ def update_instagram_rows(df, progress_callback=None):
             )
 
         except Exception as exc:
-            print(
-                f"Instagram batch {batch_num} failed: {exc}"
-            )
+            print(f"Instagram batch failed: {exc}")
             continue
 
         results = {}
@@ -123,6 +116,7 @@ def update_instagram_rows(df, progress_callback=None):
                     item.get("inputUrl")
                     or item.get("url")
                     or item.get("postUrl")
+                    or item.get("displayUrl")
                     or ""
                 )
 
@@ -136,21 +130,33 @@ def update_instagram_rows(df, progress_callback=None):
                     or 0
                 )
 
-                results[source_url] = {
-                    "views": views,
-                    "likes": likes,
-                    "comments": comments,
-                    "engagement": likes + comments,
-                }
+                if source_url:
+                    results[source_url] = {
+                        "views": views,
+                        "likes": likes,
+                        "comments": comments,
+                        "engagement": likes + comments,
+                    }
 
             except Exception:
                 continue
 
         for idx, url in batch:
-            r = results.get(normalize_url(url))
 
-            if not r:
+            matched_url = None
+
+            if url in results:
+                matched_url = url
+            else:
+                for result_url in results.keys():
+                    if url in result_url or result_url in url:
+                        matched_url = result_url
+                        break
+
+            if not matched_url:
                 continue
+
+            r = results[matched_url]
 
             df.at[idx, VIEWS_COL] = r["views"]
             df.at[idx, LIKES_COL] = r["likes"]
@@ -159,7 +165,7 @@ def update_instagram_rows(df, progress_callback=None):
 
             updated += 1
 
-        if batch_num < total_batches:
+        if start + INSTAGRAM_BATCH_SIZE < len(instagram_rows):
             time.sleep(2)
 
     return df, updated
