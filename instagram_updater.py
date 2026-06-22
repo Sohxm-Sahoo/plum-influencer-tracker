@@ -108,55 +108,45 @@ def update_instagram_rows(df, progress_callback=None):
             print(f"Instagram batch failed: {exc}")
             continue
 
-        results = {}
+       results = {}
 
-        for item in items:
-            try:
-                source_url = normalize_url(
-                    item.get("inputUrl")
-                    or item.get("url")
-                    or item.get("postUrl")
-                    or item.get("displayUrl")
-                    or ""
-                )
+for item in items:
+    try:
 
-                likes = int(item.get("likesCount") or 0)
-                comments = int(item.get("commentsCount") or 0)
+        source_url = (
+            item.get("inputUrl")
+            or item.get("url")
+            or item.get("postUrl")
+            or ""
+        )
 
-                views = int(
-                    item.get("videoViewCount")
-                    or item.get("videoPlayCount")
-                    or item.get("video_view_count")
-                    or 0
-                )
+        source_url = (
+            str(source_url)
+            .split("?")[0]
+            .rstrip("/")
+        )
 
-                if source_url:
-                    results[source_url] = {
-                        "views": views,
-                        "likes": likes,
-                        "comments": comments,
-                        "engagement": likes + comments,
-                    }
+        results[source_url] = {
+            "views": int(
+                item.get("videoPlayCount")
+                or item.get("videoViewCount")
+                or 0
+            ),
+            "likes": int(item.get("likesCount") or 0),
+            "comments": int(item.get("commentsCount") or 0),
+            "engagement": int(item.get("likesCount") or 0)
+                         + int(item.get("commentsCount") or 0),
+        }
 
-            except Exception:
-                continue
+    except Exception:
+        continue
 
         for idx, url in batch:
 
-            matched_url = None
+        if url not in results:
+            continue
 
-            if url in results:
-                matched_url = url
-            else:
-                for result_url in results.keys():
-                    if url in result_url or result_url in url:
-                        matched_url = result_url
-                        break
-
-            if not matched_url:
-                continue
-
-            r = results[matched_url]
+        r = results[url]
 
             df.at[idx, VIEWS_COL] = r["views"]
             df.at[idx, LIKES_COL] = r["likes"]
