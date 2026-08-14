@@ -25,9 +25,9 @@ Currently deployed and in private use at **Plum-Pureplay Skin Sciences**, where 
 ## Background
 Built by **Soham Sahoo** during a summer internship at Plum-Pureplay Skin Sciences, as an internal tool to help the marketing team track influencer performance across platforms without manual data collection.
 
-Soham Sahoo
-Mechanical Engineering, 3rd Year
-IIT Bombay
+**Soham Sahoo**
+**Mechanical Engineering, 3rd Year**
+**IIT Bombay**
 
 ---
 
